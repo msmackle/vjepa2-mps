@@ -185,7 +185,7 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt, de
     return
 
 
-def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=None):
+def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=None, local_files_only=True):
     # Select device: CUDA > MPS > CPU
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
@@ -212,11 +212,11 @@ def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=
 
     # Initialize the HuggingFace model, load pretrained weights in float16 to reduce memory
     # local_files_only=True uses the cached download and skips the hub check
-    model_hf = AutoModel.from_pretrained(hf_model_name, torch_dtype=torch.float16, local_files_only=True)
+    model_hf = AutoModel.from_pretrained(hf_model_name, torch_dtype=torch.float16, local_files_only=local_files_only)
     model_hf.to(device).eval()
 
     # Build HuggingFace preprocessing transform
-    hf_transform = AutoVideoProcessor.from_pretrained(hf_model_name, local_files_only=True)
+    hf_transform = AutoVideoProcessor.from_pretrained(hf_model_name, local_files_only=local_files_only)
     img_size = hf_transform.crop_size["height"]  # E.g. 384, 256, etc.
 
     # Initialize the PyTorch model in float16 to reduce memory, load pretrained weights
@@ -279,5 +279,6 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, default="sample_video.mp4", help="path to input video file")
     parser.add_argument("--num_frames", type=int, default=16)
     parser.add_argument("--viz_path", type=str, default=None, help="output GIF path (default: <video_stem>_features.gif)")
+    parser.add_argument("--download", action="store_true", default=False, help="fetch latest model from HF hub (default: use local cache)")
     args = parser.parse_args()
-    run_sample_inference(video_path=args.video, num_frames=args.num_frames, viz_path=args.viz_path)
+    run_sample_inference(video_path=args.video, num_frames=args.num_frames, viz_path=args.viz_path, local_files_only=not args.download)

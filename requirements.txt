@@ -20,5 +20,6 @@ h5py
 fire
 python-box
 scikit-image
+av
 ftfy
 jupyter

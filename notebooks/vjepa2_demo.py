@@ -55,14 +55,29 @@ def build_pt_video_transform(img_size):
     return eval_transform
 
 
-def get_video(video_path="sample_video.mp4", num_frames=64):
-    vr = VideoReader(video_path)
-    # choosing some frames here, you can define more complex sampling strategy
-    total = len(vr)
+def _subsample(frames, num_frames):
+    """Uniformly subsample num_frames indices from a list/array of frames."""
+    total = len(frames)
     step = max(1, total // num_frames)
-    frame_idx = np.arange(0, min(total, step * num_frames), step)[:num_frames]
-    video = vr.get_batch(frame_idx).asnumpy()
-    return video
+    indices = np.arange(0, min(total, step * num_frames), step)[:num_frames]
+    return indices
+
+
+def get_video(video_path="sample_video.mp4", num_frames=64):
+    # Try decord first; fall back to PyAV for formats decord struggles with (e.g. .webm on macOS)
+    try:
+        vr = VideoReader(video_path)
+        frame_idx = _subsample(vr, num_frames)
+        return vr.get_batch(frame_idx).asnumpy()
+    except Exception:
+        import av
+        container = av.open(video_path)
+        stream = container.streams.video[0]
+        stream.codec_context.skip_frame = "NONKEY" if stream.frames == 0 else "DEFAULT"
+        all_frames = [f.to_ndarray(format="rgb24") for f in container.decode(stream)]
+        container.close()
+        indices = _subsample(all_frames, num_frames)
+        return np.stack([all_frames[i] for i in indices])
 
 
 def visualize_patch_features(features, video_frames, patch_size=16, img_size=384, save_path="feature_viz.gif"):

@@ -55,8 +55,8 @@ def build_pt_video_transform(img_size):
     return eval_transform
 
 
-def get_video(num_frames=64):
-    vr = VideoReader("sample_video.mp4")
+def get_video(video_path="sample_video.mp4", num_frames=64):
+    vr = VideoReader(video_path)
     # choosing some frames here, you can define more complex sampling strategy
     total = len(vr)
     step = max(1, total // num_frames)
@@ -144,10 +144,10 @@ def clear_device_cache(device):
         torch.mps.empty_cache()
 
 
-def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device, num_frames=64):
+def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device, num_frames=64, video_path="sample_video.mp4"):
     # Run a sample inference with VJEPA.
     # Models are run sequentially to keep peak memory low.
-    raw = get_video(num_frames=num_frames)  # T x H x W x C  (uint8)
+    raw = get_video(video_path=video_path, num_frames=num_frames)  # T x H x W x C  (uint8)
     video = torch.from_numpy(raw).permute(0, 3, 1, 2)  # T x C x H x W
 
     # PT model inference
@@ -185,7 +185,7 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt, de
     return
 
 
-def run_sample_inference(num_frames=16, viz_path="feature_viz.gif"):
+def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=None):
     # Select device: CUDA > MPS > CPU
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
@@ -193,7 +193,13 @@ def run_sample_inference(num_frames=16, viz_path="feature_viz.gif"):
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
-    print(f"Using device: {device}, num_frames: {num_frames}")
+    if viz_path is None:
+        stem = os.path.splitext(os.path.basename(video_path))[0]
+        viz_path = f"{stem}_features.gif"
+    print(f"Using device: {device}, num_frames: {num_frames}, video: {video_path}")
+
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video not found: {video_path}")
 
     # HuggingFace model repo name
     hf_model_name = (
@@ -201,14 +207,6 @@ def run_sample_inference(num_frames=16, viz_path="feature_viz.gif"):
     )
     # Path to local PyTorch weights
     pt_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/vitg-384.pt"
-
-    sample_video_path = "sample_video.mp4"
-    # Download the video if not yet downloaded to local path
-    if not os.path.exists(sample_video_path):
-        video_url = "https://huggingface.co/datasets/nateraw/kinetics-mini/resolve/main/val/bowling/-WH-lxmGJVY_000005_000015.mp4"
-        command = ["wget", video_url, "-O", sample_video_path]
-        subprocess.run(command)
-        print("Downloading video")
 
     # Initialize the HuggingFace model, load pretrained weights in float16 to reduce memory
     model_hf = AutoModel.from_pretrained(hf_model_name, torch_dtype=torch.float16)
@@ -228,7 +226,7 @@ def run_sample_inference(num_frames=16, viz_path="feature_viz.gif"):
 
     # Inference on video
     out_patch_features_hf, out_patch_features_pt, video_frames = forward_vjepa_video(
-        model_hf, model_pt, hf_transform, pt_video_transform, device, num_frames=num_frames
+        model_hf, model_pt, hf_transform, pt_video_transform, device, num_frames=num_frames, video_path=video_path
     )
 
     print(
@@ -275,7 +273,8 @@ if __name__ == "__main__":
     # Run with: `python -m notebooks.vjepa2_demo`
     # Use --num_frames to control memory usage (default 16 for MPS; 64 for full accuracy)
     parser = argparse.ArgumentParser()
+    parser.add_argument("--video", type=str, default="sample_video.mp4", help="path to input video file")
     parser.add_argument("--num_frames", type=int, default=16)
-    parser.add_argument("--viz_path", type=str, default="feature_viz.gif")
+    parser.add_argument("--viz_path", type=str, default=None, help="output GIF path (default: <video_stem>_features.gif)")
     args = parser.parse_args()
-    run_sample_inference(num_frames=args.num_frames, viz_path=args.viz_path)
+    run_sample_inference(video_path=args.video, num_frames=args.num_frames, viz_path=args.viz_path)

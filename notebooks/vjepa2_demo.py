@@ -173,19 +173,18 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt, de
     with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=torch.float16):
         out_classifier = classifier(out_patch_features_pt)
 
-    print(f"Classifier output shape: {out_classifier.shape}")
-
-    print("Top 5 predicted class names:")
     top5_indices = out_classifier.topk(5).indices[0]
     top5_probs = F.softmax(out_classifier.topk(5).values[0], dim=0) * 100.0  # convert to percentage
-    for idx, prob in zip(top5_indices, top5_probs):
-        str_idx = str(idx.item())
-        print(f"{SOMETHING_SOMETHING_V2_CLASSES[str_idx]} ({prob}%)")
+    results = [(SOMETHING_SOMETHING_V2_CLASSES[str(idx.item())], prob.item()) for idx, prob in zip(top5_indices, top5_probs)]
 
-    return
+    print("Top 5 predicted class names:")
+    for label, prob in results:
+        print(f"  {label} ({prob:.2f}%)")
+
+    return results
 
 
-def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=None, local_files_only=True):
+def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=None, report_path=None, local_files_only=True):
     # Select device: CUDA > MPS > CPU
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
@@ -193,11 +192,13 @@ def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
+    stem = os.path.splitext(os.path.basename(video_path))[0]
     if viz_path is None:
-        stem = os.path.splitext(os.path.basename(video_path))[0]
         viz_path = f"{stem}_features.gif"
     elif not viz_path.lower().endswith(".gif"):
         viz_path = os.path.splitext(viz_path)[0] + ".gif"
+    if report_path is None:
+        report_path = f"{stem}_report.txt"
     print(f"Using device: {device}, num_frames: {num_frames}, video: {video_path}")
 
     if not os.path.exists(video_path):
@@ -268,7 +269,23 @@ def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=
         subprocess.run(command)
         print("Downloading SSV2 classes")
 
-    get_vjepa_video_classification_results(classifier, out_patch_features_pt, device)
+    top5 = get_vjepa_video_classification_results(classifier, out_patch_features_pt, device)
+
+    import datetime
+    with open(report_path, "w") as f:
+        f.write(f"V-JEPA2 Inference Report\n")
+        f.write(f"{'='*40}\n")
+        f.write(f"Date:        {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Video:       {video_path}\n")
+        f.write(f"Device:      {device}\n")
+        f.write(f"Num frames:  {num_frames}\n")
+        f.write(f"HF features: {tuple(out_patch_features_hf.shape)}\n")
+        f.write(f"PT features: {tuple(out_patch_features_pt.shape)}\n")
+        f.write(f"Viz output:  {viz_path}\n")
+        f.write(f"\nTop-5 SSv2 predictions:\n")
+        for rank, (label, prob) in enumerate(top5, 1):
+            f.write(f"  {rank}. {label} ({prob:.2f}%)\n")
+    print(f"Saved report to {report_path}")
 
 
 if __name__ == "__main__":
@@ -279,6 +296,7 @@ if __name__ == "__main__":
     parser.add_argument("--video", type=str, default="sample_video.mp4", help="path to input video file")
     parser.add_argument("--num_frames", type=int, default=16)
     parser.add_argument("--viz_path", type=str, default=None, help="output GIF path (default: <video_stem>_features.gif)")
+    parser.add_argument("--report_path", type=str, default=None, help="output report path (default: <video_stem>_report.txt)")
     parser.add_argument("--download", action="store_true", default=False, help="fetch latest model from HF hub (default: use local cache)")
     args = parser.parse_args()
-    run_sample_inference(video_path=args.video, num_frames=args.num_frames, viz_path=args.viz_path, local_files_only=not args.download)
+    run_sample_inference(video_path=args.video, num_frames=args.num_frames, viz_path=args.viz_path, report_path=args.report_path, local_files_only=not args.download)

@@ -211,11 +211,12 @@ def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=
     pt_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/vitg-384.pt"
 
     # Initialize the HuggingFace model, load pretrained weights in float16 to reduce memory
-    model_hf = AutoModel.from_pretrained(hf_model_name, torch_dtype=torch.float16)
+    # local_files_only=True uses the cached download and skips the hub check
+    model_hf = AutoModel.from_pretrained(hf_model_name, torch_dtype=torch.float16, local_files_only=True)
     model_hf.to(device).eval()
 
     # Build HuggingFace preprocessing transform
-    hf_transform = AutoVideoProcessor.from_pretrained(hf_model_name)
+    hf_transform = AutoVideoProcessor.from_pretrained(hf_model_name, local_files_only=True)
     img_size = hf_transform.crop_size["height"]  # E.g. 384, 256, etc.
 
     # Initialize the PyTorch model in float16 to reduce memory, load pretrained weights

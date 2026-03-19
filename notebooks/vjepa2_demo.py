@@ -65,6 +65,66 @@ def get_video(num_frames=64):
     return video
 
 
+def visualize_patch_features(features, video_frames, patch_size=16, save_path="feature_viz.gif"):
+    """
+    Visualize encoder patch features via PCA, saved as a side-by-side GIF.
+
+    Left half:  original video frame
+    Right half: top-3 PCA components of the patch features mapped to RGB,
+                showing which regions the model represents similarly.
+
+    Args:
+        features:     [1, T*H_patches*W_patches, D] tensor (CPU or GPU, any dtype)
+        video_frames: [T, C, H, W] uint8 tensor (raw, un-normalized)
+        patch_size:   spatial patch size used by the encoder
+        save_path:    output GIF path
+    """
+    from PIL import Image
+
+    T, C, H, W = video_frames.shape
+    H_patches = H // patch_size
+    W_patches = W // patch_size
+
+    # Move to CPU float32 numpy: [T*H_patches*W_patches, D]
+    feats = features[0].cpu().float().numpy()
+
+    # PCA via SVD (no sklearn needed)
+    feats_centered = feats - feats.mean(axis=0)
+    _, _, Vt = np.linalg.svd(feats_centered, full_matrices=False)
+    pca = feats_centered @ Vt[:3].T  # [T*N_patches, 3]
+
+    # Normalize each component to [0, 1]
+    for i in range(3):
+        lo, hi = pca[:, i].min(), pca[:, i].max()
+        pca[:, i] = (pca[:, i] - lo) / (hi - lo + 1e-8)
+
+    # Reshape to [T, H_patches, W_patches, 3]
+    pca = pca.reshape(T, H_patches, W_patches, 3)
+
+    gif_frames = []
+    for t in range(T):
+        # Original frame: [H, W, C] uint8
+        orig = video_frames[t].permute(1, 2, 0).numpy()
+
+        # PCA frame: upsample from patch grid to full resolution
+        pca_img = Image.fromarray((pca[t] * 255).astype(np.uint8), mode="RGB")
+        pca_img = pca_img.resize((W, H), Image.BILINEAR)
+        pca_arr = np.array(pca_img)
+
+        # Side-by-side: [H, 2*W, 3]
+        combined = np.concatenate([orig, pca_arr], axis=1)
+        gif_frames.append(Image.fromarray(combined))
+
+    gif_frames[0].save(
+        save_path,
+        save_all=True,
+        append_images=gif_frames[1:],
+        duration=100,  # ms per frame
+        loop=0,
+    )
+    print(f"Saved feature visualization to {save_path}")
+
+
 def clear_device_cache(device):
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -75,8 +135,8 @@ def clear_device_cache(device):
 def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device, num_frames=64):
     # Run a sample inference with VJEPA.
     # Models are run sequentially to keep peak memory low.
-    video = get_video(num_frames=num_frames)  # T x H x W x C
-    video = torch.from_numpy(video).permute(0, 3, 1, 2)  # T x C x H x W
+    raw = get_video(num_frames=num_frames)  # T x H x W x C  (uint8)
+    video = torch.from_numpy(raw).permute(0, 3, 1, 2)  # T x C x H x W
 
     # PT model inference
     with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=torch.float16):
@@ -92,7 +152,7 @@ def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device, 
 
     clear_device_cache(device)
 
-    return out_patch_features_hf, out_patch_features_pt
+    return out_patch_features_hf, out_patch_features_pt, video
 
 
 def get_vjepa_video_classification_results(classifier, out_patch_features_pt, device):
@@ -105,7 +165,7 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt, de
 
     print("Top 5 predicted class names:")
     top5_indices = out_classifier.topk(5).indices[0]
-    top5_probs = F.softmax(out_classifier.topk(5).values[0]) * 100.0  # convert to percentage
+    top5_probs = F.softmax(out_classifier.topk(5).values[0], dim=0) * 100.0  # convert to percentage
     for idx, prob in zip(top5_indices, top5_probs):
         str_idx = str(idx.item())
         print(f"{SOMETHING_SOMETHING_V2_CLASSES[str_idx]} ({prob}%)")
@@ -113,7 +173,7 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt, de
     return
 
 
-def run_sample_inference(num_frames=16):
+def run_sample_inference(num_frames=16, viz_path="feature_viz.gif"):
     # Select device: CUDA > MPS > CPU
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
@@ -155,7 +215,7 @@ def run_sample_inference(num_frames=16):
     pt_video_transform = build_pt_video_transform(img_size=img_size)
 
     # Inference on video
-    out_patch_features_hf, out_patch_features_pt = forward_vjepa_video(
+    out_patch_features_hf, out_patch_features_pt, video_frames = forward_vjepa_video(
         model_hf, model_pt, hf_transform, pt_video_transform, device, num_frames=num_frames
     )
 
@@ -168,6 +228,9 @@ def run_sample_inference(num_frames=16):
         Close: {torch.allclose(out_patch_features_pt, out_patch_features_hf, atol=1e-3, rtol=1e-3)}
         """
     )
+
+    # Visualize patch features via PCA
+    visualize_patch_features(out_patch_features_pt, video_frames, patch_size=16, save_path=viz_path)
 
     # Initialize the classifier in float16 to reduce memory
     classifier_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/ssv2-vitg-384-64x2x3.pt"
@@ -201,5 +264,6 @@ if __name__ == "__main__":
     # Use --num_frames to control memory usage (default 16 for MPS; 64 for full accuracy)
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_frames", type=int, default=16)
+    parser.add_argument("--viz_path", type=str, default="feature_viz.gif")
     args = parser.parse_args()
-    run_sample_inference(num_frames=args.num_frames)
+    run_sample_inference(num_frames=args.num_frames, viz_path=args.viz_path)

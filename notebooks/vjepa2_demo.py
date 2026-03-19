@@ -63,25 +63,40 @@ def get_video():
     return video
 
 
+def clear_device_cache(device):
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    elif device.type == "mps":
+        torch.mps.empty_cache()
+
+
 def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device):
-    # Run a sample inference with VJEPA
-    with torch.inference_mode():
-        # Read and pre-process the image
-        video = get_video()  # T x H x W x C
-        video = torch.from_numpy(video).permute(0, 3, 1, 2)  # T x C x H x W
+    # Run a sample inference with VJEPA.
+    # Models are run sequentially to keep peak memory low.
+    video = get_video()  # T x H x W x C
+    video = torch.from_numpy(video).permute(0, 3, 1, 2)  # T x C x H x W
+
+    # PT model inference
+    with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=torch.float16):
         x_pt = pt_transform(video).to(device).unsqueeze(0)
-        x_hf = hf_transform(video, return_tensors="pt")["pixel_values_videos"].to(device)
-        # Extract the patch-wise features from the last layer
         out_patch_features_pt = model_pt(x_pt)
+
+    clear_device_cache(device)
+
+    # HF model inference
+    with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=torch.float16):
+        x_hf = hf_transform(video, return_tensors="pt")["pixel_values_videos"].to(device)
         out_patch_features_hf = model_hf.get_vision_features(x_hf)
+
+    clear_device_cache(device)
 
     return out_patch_features_hf, out_patch_features_pt
 
 
-def get_vjepa_video_classification_results(classifier, out_patch_features_pt):
+def get_vjepa_video_classification_results(classifier, out_patch_features_pt, device):
     SOMETHING_SOMETHING_V2_CLASSES = json.load(open("ssv2_classes.json", "r"))
 
-    with torch.inference_mode():
+    with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=torch.float16):
         out_classifier = classifier(out_patch_features_pt)
 
     print(f"Classifier output shape: {out_classifier.shape}")
@@ -121,17 +136,17 @@ def run_sample_inference():
         subprocess.run(command)
         print("Downloading video")
 
-    # Initialize the HuggingFace model, load pretrained weights
-    model_hf = AutoModel.from_pretrained(hf_model_name)
+    # Initialize the HuggingFace model, load pretrained weights in float16 to reduce memory
+    model_hf = AutoModel.from_pretrained(hf_model_name, torch_dtype=torch.float16)
     model_hf.to(device).eval()
 
     # Build HuggingFace preprocessing transform
     hf_transform = AutoVideoProcessor.from_pretrained(hf_model_name)
     img_size = hf_transform.crop_size["height"]  # E.g. 384, 256, etc.
 
-    # Initialize the PyTorch model, load pretrained weights
+    # Initialize the PyTorch model in float16 to reduce memory, load pretrained weights
     model_pt = vit_giant_xformers_rope(img_size=(img_size, img_size), num_frames=64)
-    model_pt.to(device).eval()
+    model_pt.to(device).half().eval()
     load_pretrained_vjepa_pt_weights(model_pt, pt_model_path)
 
     # Build PyTorch preprocessing transform
@@ -152,10 +167,13 @@ def run_sample_inference():
         """
     )
 
-    # Initialize the classifier
+    # Initialize the classifier in float16 to reduce memory
     classifier_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/ssv2-vitg-384-64x2x3.pt"
     classifier = (
-        AttentiveClassifier(embed_dim=model_pt.embed_dim, num_heads=16, depth=4, num_classes=174).to(device).eval()
+        AttentiveClassifier(embed_dim=model_pt.embed_dim, num_heads=16, depth=4, num_classes=174)
+        .to(device)
+        .half()
+        .eval()
     )
     load_pretrained_vjepa_classifier_weights(classifier, classifier_model_path)
 
@@ -172,7 +190,7 @@ def run_sample_inference():
         subprocess.run(command)
         print("Downloading SSV2 classes")
 
-    get_vjepa_video_classification_results(classifier, out_patch_features_pt)
+    get_vjepa_video_classification_results(classifier, out_patch_features_pt, device)
 
 
 if __name__ == "__main__":

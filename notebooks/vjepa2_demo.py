@@ -196,6 +196,8 @@ def run_sample_inference(video_path="sample_video.mp4", num_frames=16, viz_path=
     if viz_path is None:
         stem = os.path.splitext(os.path.basename(video_path))[0]
         viz_path = f"{stem}_features.gif"
+    elif not viz_path.lower().endswith(".gif"):
+        viz_path = os.path.splitext(viz_path)[0] + ".gif"
     print(f"Using device: {device}, num_frames: {num_frames}, video: {video_path}")
 
     if not os.path.exists(video_path):

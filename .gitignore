@@ -32,3 +32,5 @@ app/vjepa_droid_v4/local/
 configs/local
 
 checkpoints/
+output/
+videos/

@@ -364,5 +364,5 @@ def init_opt(
         T_max=int(ipe_scale * num_epochs * iterations_per_epoch),
     )
 
-    scaler = torch.cuda.amp.GradScaler() if mixed_precision else None
+    scaler = torch.amp.GradScaler("cuda") if torch.cuda.is_available() and mixed_precision else None
     return optimizer, scaler, scheduler, wd_scheduler

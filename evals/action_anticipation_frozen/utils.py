@@ -31,7 +31,7 @@ def init_opt(classifiers, iterations_per_epoch, opt_kwargs, num_epochs, use_bflo
         optimizers += [torch.optim.AdamW(param_groups)]
         schedulers += [WarmupCosineLRSchedule(optimizers[-1], T_max=int(num_epochs * iterations_per_epoch))]
         wd_schedulers += [CosineWDSchedule(optimizers[-1], T_max=int(num_epochs * iterations_per_epoch))]
-        scalers += [torch.cuda.amp.GradScaler() if use_bfloat16 else None]
+        scalers += [torch.amp.GradScaler("cuda") if torch.cuda.is_available() and use_bfloat16 else None]
     return optimizers, scalers, schedulers, wd_schedulers
 
 

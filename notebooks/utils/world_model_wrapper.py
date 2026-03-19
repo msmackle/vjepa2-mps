@@ -28,14 +28,22 @@ class WorldModel(object):
             "verbose": True,
         },
         normalize_reps=True,
-        device="cuda:0",
+        device=None,
     ):
+        import torch
         super().__init__()
         self.encoder = encoder
         self.predictor = predictor
         self.normalize_reps = normalize_reps
         self.transform = transform
         self.tokens_per_frame = tokens_per_frame
+        if device is None:
+            if torch.cuda.is_available():
+                device = torch.device("cuda:0")
+            elif torch.backends.mps.is_available():
+                device = torch.device("mps")
+            else:
+                device = torch.device("cpu")
         self.device = device
         self.mpc_args = mpc_args
 

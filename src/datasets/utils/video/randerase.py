@@ -25,7 +25,7 @@ import random
 import torch
 
 
-def _get_pixels(per_pixel, rand_color, patch_size, dtype=torch.float32, device="cuda"):
+def _get_pixels(per_pixel, rand_color, patch_size, dtype=torch.float32, device="cpu"):
     # NOTE I've seen CUDA illegal memory access errors being caused by the normal_()
     # paths, flip the order so normal is run on CPU if this becomes a problem
     # Issue has been fixed in master https://github.com/pytorch/pytorch/issues/19508
@@ -67,7 +67,7 @@ class RandomErasing:
         min_count=1,
         max_count=None,
         num_splits=0,
-        device="cuda",
+        device="cpu",
         cube=True,
     ):
         self.probability = probability
@@ -109,7 +109,7 @@ class RandomErasing:
                         self.rand_color,
                         (chan, h, w),
                         dtype=dtype,
-                        device=self.device,
+                        device=img.device,
                     )
                     break
 
@@ -143,7 +143,7 @@ class RandomErasing:
                             self.rand_color,
                             (chan, h, w),
                             dtype=dtype,
-                            device=self.device,
+                            device=img_instance.device,
                         )
                     break
 

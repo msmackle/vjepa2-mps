@@ -163,11 +163,13 @@ def main(args, resume_preempt=False):
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
 
     # -- set device
-    if not torch.cuda.is_available():
-        device = torch.device("cpu")
-    else:
+    if torch.cuda.is_available():
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     # -- log/checkpointing paths
     log_file = os.path.join(folder, f"log_r{rank}.csv")
@@ -441,7 +443,7 @@ def main(args, resume_preempt=False):
                     return torch.mean(torch.abs(z - _h) ** loss_exp) / loss_exp
 
                 # Step 1. Forward
-                with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
+                with torch.amp.autocast(device_type=device.type, dtype=dtype, enabled=mixed_precision):
                     h = forward_target(clips)
                     z_tf, z_ar = forward_predictions(h)
                     jloss = loss_fn(z_tf, h)
@@ -503,7 +505,7 @@ def main(args, resume_preempt=False):
                             sloss_meter.avg,
                             _new_wd,
                             _new_lr,
-                            torch.cuda.max_memory_allocated() / 1024.0**2,
+                            torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                             iter_time_meter.avg,
                             gpu_time_meter.avg,
                             data_elapsed_time_meter.avg,

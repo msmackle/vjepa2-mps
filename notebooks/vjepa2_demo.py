@@ -63,14 +63,14 @@ def get_video():
     return video
 
 
-def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform):
+def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device):
     # Run a sample inference with VJEPA
     with torch.inference_mode():
         # Read and pre-process the image
         video = get_video()  # T x H x W x C
         video = torch.from_numpy(video).permute(0, 3, 1, 2)  # T x C x H x W
-        x_pt = pt_transform(video).cuda().unsqueeze(0)
-        x_hf = hf_transform(video, return_tensors="pt")["pixel_values_videos"].to("cuda")
+        x_pt = pt_transform(video).to(device).unsqueeze(0)
+        x_hf = hf_transform(video, return_tensors="pt")["pixel_values_videos"].to(device)
         # Extract the patch-wise features from the last layer
         out_patch_features_pt = model_pt(x_pt)
         out_patch_features_hf = model_hf.get_vision_features(x_hf)
@@ -97,12 +97,21 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt):
 
 
 def run_sample_inference():
+    # Select device: CUDA > MPS > CPU
+    if torch.cuda.is_available():
+        device = torch.device("cuda:0")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+    print(f"Using device: {device}")
+
     # HuggingFace model repo name
     hf_model_name = (
         "facebook/vjepa2-vitg-fpc64-384"  # Replace with your favored model, e.g. facebook/vjepa2-vitg-fpc64-384
     )
     # Path to local PyTorch weights
-    pt_model_path = "YOUR_MODEL_PATH"
+    pt_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/vitg-384.pt"
 
     sample_video_path = "sample_video.mp4"
     # Download the video if not yet downloaded to local path
@@ -114,7 +123,7 @@ def run_sample_inference():
 
     # Initialize the HuggingFace model, load pretrained weights
     model_hf = AutoModel.from_pretrained(hf_model_name)
-    model_hf.cuda().eval()
+    model_hf.to(device).eval()
 
     # Build HuggingFace preprocessing transform
     hf_transform = AutoVideoProcessor.from_pretrained(hf_model_name)
@@ -122,7 +131,7 @@ def run_sample_inference():
 
     # Initialize the PyTorch model, load pretrained weights
     model_pt = vit_giant_xformers_rope(img_size=(img_size, img_size), num_frames=64)
-    model_pt.cuda().eval()
+    model_pt.to(device).eval()
     load_pretrained_vjepa_pt_weights(model_pt, pt_model_path)
 
     # Build PyTorch preprocessing transform
@@ -130,7 +139,7 @@ def run_sample_inference():
 
     # Inference on video
     out_patch_features_hf, out_patch_features_pt = forward_vjepa_video(
-        model_hf, model_pt, hf_transform, pt_video_transform
+        model_hf, model_pt, hf_transform, pt_video_transform, device
     )
 
     print(
@@ -144,9 +153,9 @@ def run_sample_inference():
     )
 
     # Initialize the classifier
-    classifier_model_path = "YOUR_ATTENTIVE_PROBE_PATH"
+    classifier_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/ssv2-vitg-384-64x2x3.pt"
     classifier = (
-        AttentiveClassifier(embed_dim=model_pt.embed_dim, num_heads=16, depth=4, num_classes=174).cuda().eval()
+        AttentiveClassifier(embed_dim=model_pt.embed_dim, num_heads=16, depth=4, num_classes=174).to(device).eval()
     )
     load_pretrained_vjepa_classifier_weights(classifier, classifier_model_path)
 

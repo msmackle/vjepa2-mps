@@ -42,8 +42,9 @@ _GLOBAL_SEED = 0
 random.seed(_GLOBAL_SEED)
 np.random.seed(_GLOBAL_SEED)
 torch.manual_seed(_GLOBAL_SEED)
-torch.cuda.manual_seed(_GLOBAL_SEED)
-torch.backends.cudnn.benchmark = True
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(_GLOBAL_SEED)
+    torch.backends.cudnn.benchmark = True
 
 
 pp = pprint.PrettyPrinter(indent=4)
@@ -132,11 +133,13 @@ def main(args_eval, resume_preempt=False):
     except Exception:
         pass
 
-    if not torch.cuda.is_available():
-        device = torch.device("cpu")
-    else:
+    if torch.cuda.is_available():
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     world_size, rank = init_distributed()
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
@@ -479,7 +482,7 @@ def train_one_epoch(
         [s.step() for s in scheduler]
         [wds.step() for wds in wd_scheduler]
 
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+        with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_bfloat16):
 
             # Format of udata: ("video", "verb", "noun", "anticipation_time_sec")
             clips = udata[0].to(device)
@@ -550,7 +553,7 @@ def train_one_epoch(
                         max([a["recall"] for a in action_metrics]),
                         max([v["recall"] for v in verb_metrics]),
                         max([n["recall"] for n in noun_metrics]),
-                        torch.cuda.max_memory_allocated() / 1024.0**2,
+                        torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                         data_elapsed_time_meter.avg,
                     )
                 )
@@ -565,7 +568,7 @@ def train_one_epoch(
                         itr,
                         max([a["accuracy"] for a in action_metrics]),
                         max([a["recall"] for a in action_metrics]),
-                        torch.cuda.max_memory_allocated() / 1024.0**2,
+                        torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                         data_elapsed_time_meter.avg,
                     )
                 )
@@ -626,7 +629,7 @@ def validate(
             _data_loader = iter(data_loader)
             udata = next(_data_loader)
 
-        with torch.cuda.amp.autocast(dtype=torch.bfloat16, enabled=use_bfloat16):
+        with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=use_bfloat16):
             # Format of udata: ("video", "verb", "noun", "anticipation_time_sec")
             clips = udata[0].to(device)
             anticipation_times = udata[-1].to(device)  # [B]
@@ -683,7 +686,7 @@ def validate(
                         loss,
                         verb_loss,
                         noun_loss,
-                        torch.cuda.max_memory_allocated() / 1024.0**2,
+                        torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                     )
                 )
             else:
@@ -698,7 +701,7 @@ def validate(
                         max([a["accuracy"] for a in action_metrics]),
                         max([a["recall"] for a in action_metrics]),
                         loss,
-                        torch.cuda.max_memory_allocated() / 1024.0**2,
+                        torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                     )
                 )
 

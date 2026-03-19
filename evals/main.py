@@ -47,7 +47,8 @@ def process_main(args, rank, fname, world_size, devices):
     import logging
     import os
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(devices[rank].split(":")[-1])
+    if devices[rank].startswith("cuda"):
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(devices[rank].split(":")[-1])
 
     logging.basicConfig()
     logger = logging.getLogger()
@@ -104,7 +105,14 @@ if __name__ == "__main__":
             )
         # Single-GPU debugging
         else:
-            process_main(args=args, rank=0, fname=args.fname, world_size=1, devices=["cuda:0"])
+            import torch
+            if torch.cuda.is_available():
+                _debug_device = "cuda:0"
+            elif torch.backends.mps.is_available():
+                _debug_device = "mps"
+            else:
+                _debug_device = "cpu"
+            process_main(args=args, rank=0, fname=args.fname, world_size=1, devices=[_debug_device])
     else:
         num_gpus = len(args.devices)
         mp.set_start_method("spawn")

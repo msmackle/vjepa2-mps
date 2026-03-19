@@ -107,11 +107,13 @@ def main(args_eval, resume_preempt=False):
     except Exception:
         pass
 
-    if not torch.cuda.is_available():
-        device = torch.device("cpu")
-    else:
+    if torch.cuda.is_available():
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     world_size, rank = init_distributed()
     logger.info(f"Initialized (rank/world-size) {rank}/{world_size}")
@@ -280,7 +282,7 @@ def run_one_epoch(
             [s.step() for s in scheduler]
             [wds.step() for wds in wd_scheduler]
 
-        with torch.cuda.amp.autocast(dtype=torch.float16, enabled=use_bfloat16):
+        with torch.amp.autocast(device_type=device.type, dtype=torch.float16, enabled=use_bfloat16):
             imgs, labels = data[0].to(device), data[1].to(device)
             with torch.no_grad():
                 outputs = encoder(imgs)
@@ -314,7 +316,7 @@ def run_one_epoch(
                     _agg_top1.max(),
                     _agg_top1.mean(),
                     _agg_top1.min(),
-                    torch.cuda.max_memory_allocated() / 1024.0**2,
+                    torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                 )
             )
 
@@ -417,7 +419,7 @@ def init_opt(classifiers, iterations_per_epoch, opt_kwargs, num_epochs, use_bflo
         optimizers += [torch.optim.AdamW(param_groups)]
         schedulers += [WarmupCosineLRSchedule(optimizers[-1], T_max=int(num_epochs * iterations_per_epoch))]
         wd_schedulers += [CosineWDSchedule(optimizers[-1], T_max=int(num_epochs * iterations_per_epoch))]
-        scalers += [torch.cuda.amp.GradScaler() if use_bfloat16 else None]
+        scalers += [torch.amp.GradScaler("cuda") if torch.cuda.is_available() and use_bfloat16 else None]
     return optimizers, scalers, schedulers, wd_schedulers
 
 

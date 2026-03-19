@@ -289,11 +289,13 @@ def main(args, resume_preempt=False):
         lambda_value = lambda_value_vid
 
     # -- set device
-    if not torch.cuda.is_available():
-        device = torch.device("cpu")
-    else:
+    if torch.cuda.is_available():
         device = torch.device("cuda:0")
         torch.cuda.set_device(device)
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
 
     # -- log/checkpointing paths
     log_file = os.path.join(folder, f"log_r{rank}.csv")
@@ -675,7 +677,7 @@ def main(args, resume_preempt=False):
                             return loss
 
                 # Step 1. Forward
-                with torch.cuda.amp.autocast(dtype=dtype, enabled=mixed_precision):
+                with torch.amp.autocast(device_type=device.type, dtype=dtype, enabled=mixed_precision):
                     h = forward_target(clips)
                     z_pred, z_context = forward_context(clips)
                     loss = 0
@@ -815,7 +817,7 @@ def main(args, resume_preempt=False):
                             + "]",
                             _new_wd,
                             _new_lr,
-                            torch.cuda.max_memory_allocated() / 1024.0**2,
+                            torch.cuda.max_memory_allocated() / 1024.0**2 if torch.cuda.is_available() else 0.,
                             iter_time_meter.avg,
                             gpu_time_meter.avg,
                             data_elapsed_time_meter.avg,

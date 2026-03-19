@@ -55,10 +55,12 @@ def build_pt_video_transform(img_size):
     return eval_transform
 
 
-def get_video():
+def get_video(num_frames=64):
     vr = VideoReader("sample_video.mp4")
     # choosing some frames here, you can define more complex sampling strategy
-    frame_idx = np.arange(0, 128, 2)
+    total = len(vr)
+    step = max(1, total // num_frames)
+    frame_idx = np.arange(0, min(total, step * num_frames), step)[:num_frames]
     video = vr.get_batch(frame_idx).asnumpy()
     return video
 
@@ -70,15 +72,15 @@ def clear_device_cache(device):
         torch.mps.empty_cache()
 
 
-def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device):
+def forward_vjepa_video(model_hf, model_pt, hf_transform, pt_transform, device, num_frames=64):
     # Run a sample inference with VJEPA.
     # Models are run sequentially to keep peak memory low.
-    video = get_video()  # T x H x W x C
+    video = get_video(num_frames=num_frames)  # T x H x W x C
     video = torch.from_numpy(video).permute(0, 3, 1, 2)  # T x C x H x W
 
     # PT model inference
     with torch.inference_mode(), torch.amp.autocast(device_type=device.type, dtype=torch.float16):
-        x_pt = pt_transform(video).to(device).unsqueeze(0)
+        x_pt = pt_transform(video).to(device).unsqueeze(0)  # [1, C, T, H, W]
         out_patch_features_pt = model_pt(x_pt)
 
     clear_device_cache(device)
@@ -111,7 +113,7 @@ def get_vjepa_video_classification_results(classifier, out_patch_features_pt, de
     return
 
 
-def run_sample_inference():
+def run_sample_inference(num_frames=16):
     # Select device: CUDA > MPS > CPU
     if torch.cuda.is_available():
         device = torch.device("cuda:0")
@@ -119,7 +121,7 @@ def run_sample_inference():
         device = torch.device("mps")
     else:
         device = torch.device("cpu")
-    print(f"Using device: {device}")
+    print(f"Using device: {device}, num_frames: {num_frames}")
 
     # HuggingFace model repo name
     hf_model_name = (
@@ -145,7 +147,7 @@ def run_sample_inference():
     img_size = hf_transform.crop_size["height"]  # E.g. 384, 256, etc.
 
     # Initialize the PyTorch model in float16 to reduce memory, load pretrained weights
-    model_pt = vit_giant_xformers_rope(img_size=(img_size, img_size), num_frames=64)
+    model_pt = vit_giant_xformers_rope(img_size=(img_size, img_size), num_frames=num_frames)
     model_pt.to(device).half().eval()
     load_pretrained_vjepa_pt_weights(model_pt, pt_model_path)
 
@@ -154,7 +156,7 @@ def run_sample_inference():
 
     # Inference on video
     out_patch_features_hf, out_patch_features_pt = forward_vjepa_video(
-        model_hf, model_pt, hf_transform, pt_video_transform, device
+        model_hf, model_pt, hf_transform, pt_video_transform, device, num_frames=num_frames
     )
 
     print(
@@ -194,5 +196,10 @@ def run_sample_inference():
 
 
 if __name__ == "__main__":
+    import argparse
     # Run with: `python -m notebooks.vjepa2_demo`
-    run_sample_inference()
+    # Use --num_frames to control memory usage (default 16 for MPS; 64 for full accuracy)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--num_frames", type=int, default=16)
+    args = parser.parse_args()
+    run_sample_inference(num_frames=args.num_frames)

@@ -65,7 +65,7 @@ def get_video(num_frames=64):
     return video
 
 
-def visualize_patch_features(features, video_frames, patch_size=16, save_path="feature_viz.gif"):
+def visualize_patch_features(features, video_frames, patch_size=16, img_size=384, save_path="feature_viz.gif"):
     """
     Visualize encoder patch features via PCA, saved as a side-by-side GIF.
 
@@ -74,44 +74,56 @@ def visualize_patch_features(features, video_frames, patch_size=16, save_path="f
                 showing which regions the model represents similarly.
 
     Args:
-        features:     [1, T*H_patches*W_patches, D] tensor (CPU or GPU, any dtype)
+        features:     [1, T_eff*H_patches*W_patches, D] tensor (CPU or GPU, any dtype)
         video_frames: [T, C, H, W] uint8 tensor (raw, un-normalized)
         patch_size:   spatial patch size used by the encoder
+        img_size:     spatial size the encoder received (after crop/resize transform)
         save_path:    output GIF path
     """
     from PIL import Image
 
-    T, C, H, W = video_frames.shape
-    H_patches = H // patch_size
-    W_patches = W // patch_size
+    T, C, H_raw, W_raw = video_frames.shape
 
-    # Move to CPU float32 numpy: [T*H_patches*W_patches, D]
+    # Patch grid is computed on the transformed (cropped) frame, not the raw frame
+    H_patches = img_size // patch_size
+    W_patches = img_size // patch_size
+
+    # T_eff may be less than T when tubelet_size > 1 (e.g. tubelet_size=2 halves T)
+    N_total = features.shape[1]
+    T_eff = N_total // (H_patches * W_patches)
+
+    # Move to CPU float32 numpy: [T_eff*H_patches*W_patches, D]
     feats = features[0].cpu().float().numpy()
 
     # PCA via SVD (no sklearn needed)
     feats_centered = feats - feats.mean(axis=0)
     _, _, Vt = np.linalg.svd(feats_centered, full_matrices=False)
-    pca = feats_centered @ Vt[:3].T  # [T*N_patches, 3]
+    pca = feats_centered @ Vt[:3].T  # [T_eff*N_patches, 3]
 
     # Normalize each component to [0, 1]
     for i in range(3):
         lo, hi = pca[:, i].min(), pca[:, i].max()
         pca[:, i] = (pca[:, i] - lo) / (hi - lo + 1e-8)
 
-    # Reshape to [T, H_patches, W_patches, 3]
-    pca = pca.reshape(T, H_patches, W_patches, 3)
+    # Reshape to [T_eff, H_patches, W_patches, 3]
+    pca = pca.reshape(T_eff, H_patches, W_patches, 3)
+
+    # Upsample temporally to match the number of video frames (nearest-neighbour)
+    if T_eff < T:
+        indices = (np.arange(T) * T_eff / T).astype(int)
+        pca = pca[indices]  # [T, H_patches, W_patches, 3]
 
     gif_frames = []
     for t in range(T):
-        # Original frame: [H, W, C] uint8
+        # Original frame: [H_raw, W_raw, C] uint8
         orig = video_frames[t].permute(1, 2, 0).numpy()
 
-        # PCA frame: upsample from patch grid to full resolution
+        # PCA frame: upsample from patch grid to raw frame dimensions
         pca_img = Image.fromarray((pca[t] * 255).astype(np.uint8), mode="RGB")
-        pca_img = pca_img.resize((W, H), Image.BILINEAR)
+        pca_img = pca_img.resize((W_raw, H_raw), Image.BILINEAR)
         pca_arr = np.array(pca_img)
 
-        # Side-by-side: [H, 2*W, 3]
+        # Side-by-side: [H_raw, 2*W_raw, 3]
         combined = np.concatenate([orig, pca_arr], axis=1)
         gif_frames.append(Image.fromarray(combined))
 
@@ -230,7 +242,7 @@ def run_sample_inference(num_frames=16, viz_path="feature_viz.gif"):
     )
 
     # Visualize patch features via PCA
-    visualize_patch_features(out_patch_features_pt, video_frames, patch_size=16, save_path=viz_path)
+    visualize_patch_features(out_patch_features_pt, video_frames, patch_size=16, img_size=img_size, save_path=viz_path)
 
     # Initialize the classifier in float16 to reduce memory
     classifier_model_path = "/Users/mmacklem/Documents/repos/vjepa2/checkpoints/ssv2-vitg-384-64x2x3.pt"
